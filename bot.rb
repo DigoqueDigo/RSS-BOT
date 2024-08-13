@@ -1,65 +1,81 @@
 require 'yaml'
 require 'feedjira'
 require 'open-uri'
+require 'nokogiri'
 require 'discordrb'
 require 'discordrb/webhooks'
 require 'dotenv/load'
+require 'rufus-scheduler'
 
-$last_entries = {}
-$last_entries_file = ".last_entries.yml"
+feeds_file = "rss.yml"
+feeds = YAML.load_file(feeds_file)
 
-feed_links_file = "rss.yml"
-feed_links = YAML.load_file(feed_links_file)
-
+scheduler = Rufus::Scheduler.new
 bot = Discordrb::Bot.new(token: ENV['DISCORD_BOT_TOKEN'])
 
 
-if File.exist?($last_entries_file)
-    $last_entries = YAML.load_file($last_entries_file)
+def save_feeds(feeds,filename)
+    File.open(filename,'w') do |file|
+        file.write(YAML.dump(feeds))
+    end
 end
 
 
-def check_rss_feed(bot,link,channel_id)
+def get_thumbnail(url)
+    html = Nokogiri::HTML(URI.open(url))
+    html.at_css('meta[property="og:image"]')['content']
+end
 
-    content = URI.open(link).read
+
+def check_rss_feed(item,bot)
+
+    content = URI.open(item['link']).read
     feed = Feedjira.parse(content)
     feed.entries = feed.entries.sort_by(&:published)
 
     feed.entries.each do |entry|
 
-        if !$last_entries.key?(link) || ($last_entries[link] <=> entry.published) == -1
+        if !item.key?('update') || (item['update'] <=> String(entry.published)) == -1
 
             embed = Discordrb::Webhooks::Embed.new(
                 title: entry.title,
                 description: entry.summary,
-                url: entry.id,
+                url: entry.url,
                 color: 0x4C9900,
                 timestamp: entry.published)
 
             embed.author = Discordrb::Webhooks::EmbedAuthor.new(
                 name: entry.author)
 
-            bot.channel(channel_id).send_embed('',embed)
+            embed.fields = [Discordrb::Webhooks::EmbedField.new(
+                name: 'Categorias',
+                value: entry.categories.join(', '),
+                inline: true)]
+
+            embed.image = Discordrb::Webhooks::EmbedImage.new(
+                url: get_thumbnail(entry.url))
+
+            bot.channel(item['channel_id']).send_embed('',embed)
         end
     end
 
-    $last_entries[link] = "#{feed.entries.last().published}"
-
-    File.open($last_entries_file, 'w') do |file|
-        file.write(YAML.dump($last_entries))
-    end
+    item['update'] = String(feed.entries.last().published)
 end
 
 
-#scheduler = Rufus::Scheduler.new
-#scheduler.every '1h' do
-#  check_rss_feeds(bot, RSS_URLS, CHANNEL_ID)
-#end
+scheduler.every '10s' do
+    feeds.each do |item|
+        check_rss_feed(item,bot)
+    end
+    save_feeds(feeds,feeds_file)
+end
+
 
 bot.message(content: '!rss') do |event|
-    feed_links['feeds'].each do |link|
-        check_rss_feed(bot,link,ENV['CHANNEL_ID'])
+    feeds.each do |item|
+        check_rss_feed(item,bot)
     end
+    save_feeds(feeds,feeds_file)
 end
 
 bot.run
