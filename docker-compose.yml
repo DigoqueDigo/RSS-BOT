@@ -1,0 +1,8 @@
+version: '2'
+
+services:
+  rss-discord-bot:
+    container_name: rss-discord-bot
+    build:
+      context: ./
+      dockerfile: Dockerfile

@@ -1,4 +1,5 @@
 require 'yaml'
+require 'logger'
 require 'feedjira'
 require 'open-uri'
 require 'nokogiri'
@@ -7,7 +8,9 @@ require 'discordrb/webhooks'
 require 'dotenv/load'
 require 'rufus-scheduler'
 
-feeds_file = "rss.yml"
+$logger = Logger.new(STDOUT)
+
+feeds_file = ARGV[0]
 feeds = YAML.load_file(feeds_file)
 
 scheduler = Rufus::Scheduler.new
@@ -27,15 +30,15 @@ def get_thumbnail(url)
 end
 
 
-def check_rss_feed(item,bot)
+def check_rss_feed(site, params, bot)
 
-    content = URI.open(item['link']).read
+    content = URI.open(params['link']).read
     feed = Feedjira.parse(content)
     feed.entries = feed.entries.sort_by(&:published)
 
     feed.entries.each do |entry|
 
-        if !item.key?('update') || (item['update'] <=> String(entry.published)) == -1
+        if !params.key?('update') || (params['update'] <=> String(entry.published)) == -1
 
             embed = Discordrb::Webhooks::Embed.new(
                 title: entry.title,
@@ -55,25 +58,27 @@ def check_rss_feed(item,bot)
             embed.image = Discordrb::Webhooks::EmbedImage.new(
                 url: get_thumbnail(entry.url))
 
-            bot.channel(item['channel_id']).send_embed('',embed)
+            bot.channel(params['channel_id']).send_embed('',embed)
+            $logger.info(entry.url)
         end
     end
 
-    item['update'] = String(feed.entries.last().published)
+    params['update'] = String(feed.entries.last().published)
 end
 
 
 scheduler.every '10s' do
-    feeds.each do |item|
-        check_rss_feed(item,bot)
+    $logger.info("Check feeds")
+    feeds.each do |site, params|
+        check_rss_feed(site, params, bot)
     end
     save_feeds(feeds,feeds_file)
 end
 
 
 bot.message(content: '!rss') do |event|
-    feeds.each do |item|
-        check_rss_feed(item,bot)
+    feeds.each do |site, params|
+        check_rss_feed(site, params, bot)
     end
     save_feeds(feeds,feeds_file)
 end
